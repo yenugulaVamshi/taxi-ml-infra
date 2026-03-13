@@ -3,7 +3,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project = "wine-ml"
+      Project = "nyc-taxi"
       Env     = "dev"
       Managed = "terraform"
     }
