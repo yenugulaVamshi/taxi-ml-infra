@@ -33,3 +33,12 @@ module "ecr" {
   environment             = var.environment
   github_actions_role_arn = module.iam.github_actions_role_arn
 }
+
+module "rds" {
+  source                     = "../../modules/rds"
+  project                    = "nyc-taxi"
+  environment                = var.environment
+  vpc_id                     = module.vpc.vpc_id
+  private_subnet_ids         = module.vpc.private_subnet_ids
+  eks_node_security_group_id = module.eks.node_security_group_id
+}
