@@ -47,3 +47,13 @@ variable "node_max_size" {
   description = "Maximum number of worker nodes"
   default     = 4
 }
+
+output "oidc_provider_arn" {
+  description = "OIDC provider ARN for IRSA"
+  value       = aws_iam_openid_connect_provider.this.arn
+}
+
+output "oidc_provider_url" {
+  description = "OIDC provider URL for IRSA"
+  value       = aws_iam_openid_connect_provider.this.url
+}

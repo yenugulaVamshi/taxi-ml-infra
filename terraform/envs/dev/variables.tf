@@ -13,3 +13,13 @@ variable "environment" {
   description = "Deployment environment"
   default     = "dev"
 }
+
+variable "account_id" {
+  type        = string
+  description = "AWS account ID"
+}
+
+variable "github_org" {
+  type        = string
+  description = "GitHub organization or username"
+}
