@@ -26,3 +26,10 @@ module "iam" {
   eks_oidc_provider_arn = module.eks.oidc_provider_arn
   eks_oidc_provider_url = module.eks.oidc_provider_url
 }
+
+module "ecr" {
+  source                  = "../../modules/ecr"
+  project                 = "nyc-taxi"
+  environment             = var.environment
+  github_actions_role_arn = module.iam.github_actions_role_arn
+}
