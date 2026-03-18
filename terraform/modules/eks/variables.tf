@@ -21,13 +21,13 @@ variable "private_subnet_ids" {
 variable "cluster_version" {
   type        = string
   description = "Kubernetes version for EKS cluster"
-  default     = "1.29"
+  default     = "1.31"
 }
 
 variable "node_instance_type" {
   type        = string
   description = "EC2 instance type for worker nodes"
-  default     = "t3.medium"
+  default     = "t3.large"
 }
 
 variable "node_desired_size" {

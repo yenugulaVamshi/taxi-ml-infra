@@ -1,0 +1,54 @@
+airflowVersion: "2.9.2"
+
+data:
+  metadataSecretName: airflow-db-secret
+
+executor: "LocalExecutor"
+
+postgresql:
+  enabled: false
+
+redis:
+  enabled: false
+
+webserver:
+  replicas: 1
+  service:
+    type: ClusterIP
+  defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    email: admin@example.com
+    firstName: Admin
+    lastName: User
+    password: admin123
+
+scheduler:
+  replicas: 1
+  logGroomerSidecar:
+    enabled: false
+
+workers:
+  replicas: 0
+  persistence:
+    enabled: false
+
+triggerer:
+  enabled: false
+
+dags:
+  gitSync:
+    enabled: false
+  persistence:
+    enabled: false
+
+logs:
+  persistence:
+    enabled: false
+
+env:
+  - name: AIRFLOW__CORE__LOAD_EXAMPLES
+    value: "false"
+  - name: AIRFLOW__WEBSERVER__EXPOSE_CONFIG
+    value: "true"
