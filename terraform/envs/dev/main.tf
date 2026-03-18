@@ -54,3 +54,22 @@ module "sagemaker" {
   artifacts_bucket   = module.artifact_bucket.bucket_name
   processed_bucket   = "nyc-taxi-processed-dev"
 }
+
+module "raw_bucket" {
+  source      = "../../modules/s3"
+  bucket_name = "nyc-taxi-raw-dev-yenugula"
+}
+
+module "processed_bucket" {
+  source      = "../../modules/s3"
+  bucket_name = "nyc-taxi-processed-dev-yenugula"
+}
+
+module "glue" {
+  source           = "../../modules/glue"
+  project          = "nyc-taxi"
+  environment      = var.environment
+  raw_bucket       = module.raw_bucket.bucket_name
+  processed_bucket = module.processed_bucket.bucket_name
+  scripts_bucket   = "nyc-taxi-${var.environment}-glue-scripts"
+}
