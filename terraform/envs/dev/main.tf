@@ -73,3 +73,12 @@ module "glue" {
   processed_bucket = module.processed_bucket.bucket_name
   scripts_bucket   = "nyc-taxi-${var.environment}-glue-scripts"
 }
+
+module "monitoring" {
+  source           = "../../modules/monitoring"
+  project          = "nyc-taxi"
+  environment      = var.environment
+  alert_email      = var.alert_email
+  rds_instance_id  = "nyc-taxi-dev-mlflow-db"
+  eks_cluster_name = "nyc-taxi-dev-cluster"
+}

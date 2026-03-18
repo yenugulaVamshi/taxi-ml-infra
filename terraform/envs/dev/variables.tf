@@ -23,3 +23,8 @@ variable "github_org" {
   type        = string
   description = "GitHub organization or username"
 }
+
+variable "alert_email" {
+  type        = string
+  description = "Email address for CloudWatch alerts"
+}
