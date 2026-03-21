@@ -2,43 +2,51 @@
 # Terraform
 # ===============================
 
-# Local .terraform directories (providers, modules, plugins)
 **/.terraform/*
-
-# Terraform state files (NEVER commit)
 **/terraform.tfstate
 **/terraform.tfstate.*
-
-# Crash logs
 crash.log
 crash.*.log
-
-# Terraform CLI config
 .terraformrc
 terraform.rc
+
+# Lock file (optional — some teams commit this)
+# .terraform.lock.hcl
 
 # ===============================
 # Terraform variable files
 # ===============================
 
-# Ignore tfvars if they contain secrets
-# (If your tfvars are non-sensitive, you may commit them)
-# **/*.tfvars
+# ADD THESE — tfvars contain sensitive info
+**/*.tfvars
+**/*.tfvars.json
+
+# ===============================
+# AWS / Credentials
+# ===============================
+
+# ADD THESE
+*.pem
+*.key
+credentials
+.aws/
+
+# Temp JSON files from our manual cleanup work
+ingress1.json
+ingress2.json
+egress1.json
+egress2.json
 
 # ===============================
 # OS / Editor
 # ===============================
 
-# Windows
 Thumbs.db
 Desktop.ini
-
-# VS Code
 .vscode/
-
-# IntelliJ / JetBrains
 .idea/
 *.iml
+.DS_Store        # ADD — Mac users cloning your repo
 
 # ===============================
 # PowerShell / Scripts

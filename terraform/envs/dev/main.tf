@@ -44,16 +44,16 @@ module "rds" {
 }
 
 
-module "sagemaker" {
-  source             = "../../modules/sagemaker"
-  project            = "nyc-taxi"
-  environment        = var.environment
-  vpc_id             = module.vpc.vpc_id
-  private_subnet_ids = module.vpc.private_subnet_ids
-  training_role_arn  = module.iam.training_role_arn
-  artifacts_bucket   = module.artifact_bucket.bucket_name
-  processed_bucket   = "nyc-taxi-processed-dev"
-}
+#module "sagemaker" {
+#  source             = "../../modules/sagemaker"
+#  project            = "nyc-taxi"
+#  environment        = var.environment
+#  vpc_id             = module.vpc.vpc_id
+#  private_subnet_ids = module.vpc.private_subnet_ids
+#  training_role_arn  = module.iam.training_role_arn
+#  artifacts_bucket   = module.artifact_bucket.bucket_name
+#  processed_bucket   = "nyc-taxi-processed-dev"
+#}
 
 module "raw_bucket" {
   source      = "../../modules/s3"
@@ -81,4 +81,13 @@ module "monitoring" {
   alert_email      = var.alert_email
   rds_instance_id  = "nyc-taxi-dev-mlflow-db"
   eks_cluster_name = "nyc-taxi-dev-cluster"
+}
+
+module "efs" {
+  source                     = "../../modules/efs"
+  project                    = "nyc-taxi"
+  environment                = var.environment
+  vpc_id                     = module.vpc.vpc_id
+  private_subnet_ids         = module.vpc.private_subnet_ids
+  eks_node_security_group_id = module.eks.node_security_group_id
 }
