@@ -53,3 +53,12 @@ Desktop.ini
 # ===============================
 
 *.log
+
+
+# Terraform plan files (contain sensitive resource details)
+**/tfplan
+**/*.tfplan
+
+# Temporary IAM policy files
+trust-policy.json
+*-policy.json
