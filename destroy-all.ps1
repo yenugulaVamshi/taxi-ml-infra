@@ -1,102 +1,325 @@
-# save as: destroy-all.ps1
+# ============================================================
+# destroy-all.ps1
+# One-command teardown for the NYC Taxi ML Pipeline infrastructure
+#
+# Handles teardown in the correct order:
+#   1. EFS mount targets     (prevents subnet DependencyViolation)
+#   2. SageMaker user profiles + domain  (prevents hidden EFS blockage)
+#   3. terraform destroy     (destroys all Terraform-managed resources)
+#   4. VPC safety net        (cleans up any orphaned VPC resources)
+#
+# Usage:
+#   .\destroy-all.ps1
+# ============================================================
+
 $REGION = "us-east-1"
 $TF_DIR = "D:\Projects\ML_Pipeline\taxi-ml-infra\terraform\envs\dev"
 
-Write-Host "`n=== STEP 1: Delete EFS Mount Targets ===" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Yellow
+Write-Host "   NYC TAXI ML PIPELINE — FULL INFRASTRUCTURE TEARDOWN" -ForegroundColor Yellow
+Write-Host "============================================================" -ForegroundColor Yellow
+Write-Host ""
+
+# ============================================================
+# STEP 1: Delete EFS Mount Targets
+# Must be done before terraform destroy — EFS mount targets
+# create ENIs that block private subnet deletion.
+# ============================================================
+Write-Host "=== STEP 1: Delete EFS Mount Targets ===" -ForegroundColor Cyan
+
 $fsList = aws efs describe-file-systems `
   --query "FileSystems[*].FileSystemId" `
   --region $REGION --output text
 
-if ($fsList -and $fsList -ne "None") {
+if ($fsList -and $fsList -ne "None" -and $fsList.Trim() -ne "") {
     foreach ($fsId in $fsList.Split("`t")) {
-        if (-not $fsId) { continue }
-        Write-Host "Processing EFS: $fsId"
+        if (-not $fsId -or $fsId.Trim() -eq "") { continue }
+        Write-Host "  Processing EFS filesystem: $fsId"
+
         $mts = aws efs describe-mount-targets `
           --file-system-id $fsId `
           --query "MountTargets[*].MountTargetId" `
           --region $REGION --output text
-        foreach ($mt in $mts.Split("`t")) {
-            if (-not $mt) { continue }
-            Write-Host "  Deleting mount target: $mt"
-            aws efs delete-mount-target --mount-target-id $mt --region $REGION
+
+        if ($mts -and $mts -ne "None" -and $mts.Trim() -ne "") {
+            foreach ($mt in $mts.Split("`t")) {
+                if (-not $mt -or $mt.Trim() -eq "") { continue }
+                Write-Host "    Deleting mount target: $mt"
+                aws efs delete-mount-target --mount-target-id $mt --region $REGION
+            }
+            Write-Host "  Waiting 30s for ENIs to release..."
+            Start-Sleep -Seconds 30
+        } else {
+            Write-Host "  No mount targets found for $fsId"
         }
     }
-    Write-Host "Waiting 30s for ENIs to release..."
-    Start-Sleep -Seconds 30
 } else {
-    Write-Host "No EFS filesystems found. Skipping."
+    Write-Host "  No EFS filesystems found. Skipping." -ForegroundColor Gray
 }
 
-Write-Host "`n=== STEP 2: Delete SageMaker Domain (if exists) ===" -ForegroundColor Cyan
-$domainId = aws sagemaker list-domains `
+Write-Host ""
+
+# ============================================================
+# STEP 2: Delete SageMaker User Profiles + Domain
+# User profiles MUST be deleted before the domain.
+# Domain MUST be deleted with HomeEfsFileSystem=Delete to
+# remove the hidden EFS that SageMaker creates automatically.
+# ============================================================
+Write-Host "=== STEP 2: Delete SageMaker Domains ===" -ForegroundColor Cyan
+
+$domains = aws sagemaker list-domains `
   --region $REGION `
-  --query "Domains[0].DomainId" `
+  --query "Domains[*].DomainId" `
   --output text
 
-if ($domainId -and $domainId -ne "None") {
-    Write-Host "Deleting SageMaker domain: $domainId"
-    aws sagemaker delete-domain `
-      --domain-id $domainId `
-      --retention-policy HomeEfsFileSystem=Delete `
-      --region $REGION
-    Write-Host "Waiting 60s for SageMaker domain deletion..."
-    Start-Sleep -Seconds 60
+if ($domains -and $domains -ne "None" -and $domains.Trim() -ne "") {
+    foreach ($domainId in $domains.Split("`t")) {
+        if (-not $domainId -or $domainId.Trim() -eq "") { continue }
+        Write-Host "  Found SageMaker domain: $domainId"
+
+        # ── Step 2a: Delete all apps in every user profile ──────────
+        Write-Host "  Checking for running apps..."
+        $profiles = aws sagemaker list-user-profiles `
+          --domain-id $domainId `
+          --region $REGION `
+          --query "UserProfiles[*].UserProfileName" `
+          --output text
+
+        if ($profiles -and $profiles -ne "None" -and $profiles.Trim() -ne "") {
+            foreach ($profile in $profiles.Split("`t")) {
+                if (-not $profile -or $profile.Trim() -eq "") { continue }
+
+                # Delete all apps for this profile before deleting profile
+                $apps = aws sagemaker list-apps `
+                  --domain-id $domainId `
+                  --user-profile-name $profile `
+                  --region $REGION `
+                  --query "Apps[?Status!='Deleted'].{Name:AppName,Type:AppType}" `
+                  --output text 2>$null
+
+                if ($apps -and $apps.Trim() -ne "") {
+                    foreach ($appLine in $apps.Split("`n")) {
+                        $parts = $appLine.Trim().Split("`t")
+                        if ($parts.Count -lt 2) { continue }
+                        $appName = $parts[0].Trim()
+                        $appType = $parts[1].Trim()
+                        if (-not $appName -or $appName -eq "") { continue }
+                        Write-Host "    Deleting app: $appName ($appType)"
+                        aws sagemaker delete-app `
+                          --domain-id $domainId `
+                          --user-profile-name $profile `
+                          --app-name $appName `
+                          --app-type $appType `
+                          --region $REGION 2>$null
+                    }
+                    Write-Host "    Waiting 20s for apps to delete..."
+                    Start-Sleep -Seconds 20
+                }
+
+                # ── Step 2b: Delete user profile ────────────────────
+                Write-Host "    Deleting user profile: $profile"
+                aws sagemaker delete-user-profile `
+                  --domain-id $domainId `
+                  --user-profile-name $profile `
+                  --region $REGION
+
+                # Wait for profile deletion to complete
+                Write-Host "    Waiting for profile deletion..."
+                $timeout = 0
+                while ($true) {
+                    $profileStatus = aws sagemaker describe-user-profile `
+                      --domain-id $domainId `
+                      --user-profile-name $profile `
+                      --region $REGION `
+                      --query "Status" --output text 2>$null
+
+                    if (-not $profileStatus -or $profileStatus.Trim() -eq "" -or $profileStatus -eq "None") {
+                        Write-Host "    Profile deleted." -ForegroundColor Green
+                        break
+                    }
+                    if ($profileStatus -eq "Delete_Failed") {
+                        Write-Host "    Profile deletion FAILED. Check AWS console." -ForegroundColor Red
+                        break
+                    }
+                    Write-Host "    Status: $profileStatus — waiting..."
+                    Start-Sleep -Seconds 10
+                    $timeout += 10
+                    if ($timeout -gt 300) {
+                        Write-Host "    Timed out waiting for profile deletion." -ForegroundColor Red
+                        break
+                    }
+                }
+            }
+        } else {
+            Write-Host "  No user profiles found in domain."
+        }
+
+        # ── Step 2c: Delete the domain ───────────────────────────────
+        # HomeEfsFileSystem=Delete removes the hidden EFS that SageMaker
+        # creates automatically — without this, the EFS stays behind and
+        # blocks subnet deletion in terraform destroy.
+        Write-Host "  Deleting SageMaker domain: $domainId"
+        aws sagemaker delete-domain `
+          --domain-id $domainId `
+          --retention-policy HomeEfsFileSystem=Delete `
+          --region $REGION
+
+        # Wait for domain deletion to complete
+        Write-Host "  Waiting for domain deletion..."
+        $timeout = 0
+        while ($true) {
+            $domainStatus = aws sagemaker describe-domain `
+              --domain-id $domainId `
+              --region $REGION `
+              --query "Status" --output text 2>$null
+
+            if (-not $domainStatus -or $domainStatus.Trim() -eq "" -or $domainStatus -eq "None") {
+                Write-Host "  Domain deleted successfully." -ForegroundColor Green
+                break
+            }
+            if ($domainStatus -eq "Delete_Failed") {
+                Write-Host "  Domain deletion FAILED. Check AWS console before continuing." -ForegroundColor Red
+                break
+            }
+            Write-Host "  Status: $domainStatus — waiting..."
+            Start-Sleep -Seconds 15
+            $timeout += 15
+            if ($timeout -gt 600) {
+                Write-Host "  Timed out waiting for domain deletion." -ForegroundColor Red
+                break
+            }
+        }
+    }
 } else {
-    Write-Host "No SageMaker domain found. Skipping."
+    Write-Host "  No SageMaker domains found. Skipping." -ForegroundColor Gray
 }
 
-Write-Host "`n=== STEP 3: Terraform Destroy ===" -ForegroundColor Cyan
-cd $TF_DIR
+Write-Host ""
+
+# ============================================================
+# STEP 3: Terraform Destroy
+# All Terraform-managed resources destroyed in dependency order.
+# ============================================================
+Write-Host "=== STEP 3: Terraform Destroy ===" -ForegroundColor Cyan
+Set-Location $TF_DIR
 terraform destroy -auto-approve
 
-Write-Host "`n=== STEP 4: Check for Stuck VPC ===" -ForegroundColor Cyan
+Write-Host ""
+
+# ============================================================
+# STEP 4: VPC Safety Net
+# If terraform destroy left behind orphaned VPC resources
+# (security groups, route tables, IGW), clean them up so the
+# VPC can be deleted. This handles cases where manually created
+# resources exist in the VPC outside Terraform state.
+# ============================================================
+Write-Host "=== STEP 4: VPC Safety Net Cleanup ===" -ForegroundColor Cyan
+
 $vpcs = aws ec2 describe-vpcs `
   --filters "Name=tag:Project,Values=nyc-taxi" `
   --query "Vpcs[*].VpcId" `
   --region $REGION --output text
 
-if ($vpcs -and $vpcs -ne "None") {
+if ($vpcs -and $vpcs -ne "None" -and $vpcs.Trim() -ne "") {
     foreach ($vpcId in $vpcs.Split("`t")) {
-        if (-not $vpcId) { continue }
-        Write-Host "Cleaning up stuck VPC: $vpcId"
+        if (-not $vpcId -or $vpcId.Trim() -eq "") { continue }
+        Write-Host "  Found stuck VPC: $vpcId — cleaning up..."
 
-        # Delete security groups
+        # ── Delete orphaned ENIs ─────────────────────────────────────
+        Write-Host "  Checking for orphaned ENIs..."
+        $enis = aws ec2 describe-network-interfaces `
+          --filters "Name=vpc-id,Values=$vpcId" `
+          --query "NetworkInterfaces[*].{ID:NetworkInterfaceId,AttachId:Attachment.AttachmentId,Status:Status}" `
+          --region $REGION --output text
+        foreach ($eniLine in $enis.Split("`n")) {
+            $parts = $eniLine.Trim().Split("`t")
+            if ($parts.Count -lt 1 -or $parts[0].Trim() -eq "") { continue }
+            $eniId    = $parts[0].Trim()
+            $attachId = if ($parts.Count -gt 1) { $parts[1].Trim() } else { "" }
+            if ($attachId -and $attachId -ne "None" -and $attachId -ne "") {
+                Write-Host "    Detaching ENI: $eniId"
+                aws ec2 detach-network-interface --attachment-id $attachId --force --region $REGION 2>$null
+                Start-Sleep -Seconds 5
+            }
+            Write-Host "    Deleting ENI: $eniId"
+            aws ec2 delete-network-interface --network-interface-id $eniId --region $REGION 2>$null
+        }
+
+        # ── Revoke and delete non-default security groups ────────────
+        Write-Host "  Removing orphaned security groups..."
         $sgs = aws ec2 describe-security-groups `
           --filters "Name=vpc-id,Values=$vpcId" `
           --query "SecurityGroups[?GroupName!='default'].GroupId" `
           --region $REGION --output text
+        # First pass — revoke all rules to remove cross-references
         foreach ($sg in $sgs.Split("`t")) {
-            if (-not $sg) { continue }
+            if (-not $sg -or $sg.Trim() -eq "") { continue }
+            aws ec2 revoke-security-group-ingress --group-id $sg --region $REGION `
+              --ip-permissions (aws ec2 describe-security-groups --group-ids $sg --query "SecurityGroups[0].IpPermissions" --region $REGION --output json) 2>$null
+            aws ec2 revoke-security-group-egress --group-id $sg --region $REGION `
+              --ip-permissions (aws ec2 describe-security-groups --group-ids $sg --query "SecurityGroups[0].IpPermissionsEgress" --region $REGION --output json) 2>$null
+        }
+        # Second pass — delete the groups
+        foreach ($sg in $sgs.Split("`t")) {
+            if (-not $sg -or $sg.Trim() -eq "") { continue }
+            Write-Host "    Deleting security group: $sg"
             aws ec2 delete-security-group --group-id $sg --region $REGION 2>$null
         }
 
-        # Delete route tables
+        # ── Delete non-main route tables ─────────────────────────────
+        Write-Host "  Removing orphaned route tables..."
         $rts = aws ec2 describe-route-tables `
           --filters "Name=vpc-id,Values=$vpcId" `
           --query "RouteTables[?Associations[0].Main!=true].RouteTableId" `
           --region $REGION --output text
         foreach ($rt in $rts.Split("`t")) {
-            if (-not $rt) { continue }
+            if (-not $rt -or $rt.Trim() -eq "") { continue }
+            Write-Host "    Deleting route table: $rt"
             aws ec2 delete-route-table --route-table-id $rt --region $REGION 2>$null
         }
 
-        # Detach and delete IGW
+        # ── Detach and delete Internet Gateway ───────────────────────
         $igw = aws ec2 describe-internet-gateways `
           --filters "Name=attachment.vpc-id,Values=$vpcId" `
           --query "InternetGateways[0].InternetGatewayId" `
           --region $REGION --output text
-        if ($igw -and $igw -ne "None") {
+        if ($igw -and $igw -ne "None" -and $igw.Trim() -ne "") {
+            Write-Host "  Detaching and deleting IGW: $igw"
             aws ec2 detach-internet-gateway --internet-gateway-id $igw --vpc-id $vpcId --region $REGION 2>$null
             aws ec2 delete-internet-gateway --internet-gateway-id $igw --region $REGION 2>$null
         }
 
-        # Delete VPC
+        # ── Delete remaining subnets ─────────────────────────────────
+        $subnets = aws ec2 describe-subnets `
+          --filters "Name=vpc-id,Values=$vpcId" `
+          --query "Subnets[*].SubnetId" `
+          --region $REGION --output text
+        foreach ($subnet in $subnets.Split("`t")) {
+            if (-not $subnet -or $subnet.Trim() -eq "") { continue }
+            Write-Host "  Deleting subnet: $subnet"
+            aws ec2 delete-subnet --subnet-id $subnet --region $REGION 2>$null
+        }
+
+        # ── Finally delete the VPC ───────────────────────────────────
+        Write-Host "  Deleting VPC: $vpcId"
         aws ec2 delete-vpc --vpc-id $vpcId --region $REGION
-        Write-Host "VPC $vpcId deleted." -ForegroundColor Green
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  VPC $vpcId deleted successfully." -ForegroundColor Green
+        } else {
+            Write-Host "  VPC $vpcId could not be deleted. Check AWS console." -ForegroundColor Red
+        }
     }
 } else {
-    Write-Host "No stuck VPCs found." -ForegroundColor Green
+    Write-Host "  No stuck VPCs found. Terraform destroy was clean." -ForegroundColor Green
 }
 
-Write-Host "`n=== ALL DONE ===" -ForegroundColor Green
-Write-Host "All resources destroyed successfully!"
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Green
+Write-Host "   ALL DONE — Infrastructure fully destroyed" -ForegroundColor Green
+Write-Host "============================================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "To rebuild everything from scratch:" -ForegroundColor White
+Write-Host "  cd terraform\envs\dev" -ForegroundColor Gray
+Write-Host "  terraform apply -auto-approve" -ForegroundColor Gray
+Write-Host ""
