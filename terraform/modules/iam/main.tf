@@ -130,7 +130,6 @@ resource "aws_iam_role_policy" "mlflow" {
 
 # ─────────────────────────────────────────────
 # IRSA — Serving pod role
-# FastAPI needs to read models from S3
 # ─────────────────────────────────────────────
 
 resource "aws_iam_role" "serving" {
@@ -174,7 +173,6 @@ resource "aws_iam_role_policy" "serving" {
 
 # ─────────────────────────────────────────────
 # SageMaker Training role
-# Used by EKS training pods
 # ─────────────────────────────────────────────
 
 resource "aws_iam_role" "training" {
@@ -230,8 +228,6 @@ resource "aws_iam_role_policy" "training" {
 
 # ─────────────────────────────────────────────
 # SageMaker Studio Execution Role
-# SEPARATE from training role
-# This is what SageMaker Studio uses for notebooks
 # ─────────────────────────────────────────────
 
 resource "aws_iam_role" "sagemaker_studio" {
@@ -293,6 +289,53 @@ resource "aws_iam_role_policy" "sagemaker_studio" {
         Sid    = "SecretsManager"
         Effect = "Allow"
         Action = ["secretsmanager:GetSecretValue"]
+        Resource = "arn:aws:secretsmanager:*:${var.account_id}:secret:/${var.project}/*"
+      }
+    ]
+  })
+}
+
+# ─────────────────────────────────────────────
+# IRSA role for External Secrets Operator
+# Allows ESO to read secrets from AWS Secrets Manager
+# ─────────────────────────────────────────────
+
+resource "aws_iam_role" "external_secrets" {
+  name = "${var.project}-${var.environment}-external-secrets-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = var.eks_oidc_provider_arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${var.eks_oidc_provider_url}:sub" = "system:serviceaccount:external-secrets:external-secrets"
+          "${var.eks_oidc_provider_url}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "external_secrets" {
+  name = "${var.project}-${var.environment}-external-secrets-policy"
+  role = aws_iam_role.external_secrets.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SecretsManagerRead"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:ListSecretVersionIds"
+        ]
         Resource = "arn:aws:secretsmanager:*:${var.account_id}:secret:/${var.project}/*"
       }
     ]
