@@ -44,16 +44,16 @@ module "rds" {
 }
 
 
-#module "sagemaker" {
-#  source             = "../../modules/sagemaker"
-#  project            = "nyc-taxi"
-#  environment        = var.environment
-#  vpc_id             = module.vpc.vpc_id
-#  private_subnet_ids = module.vpc.private_subnet_ids
-#  training_role_arn  = module.iam.training_role_arn
-#  artifacts_bucket   = module.artifact_bucket.bucket_name
-#  processed_bucket   = "nyc-taxi-processed-dev"
-#}
+module "sagemaker" {
+  source             = "../../modules/sagemaker"
+  project            = "nyc-taxi"
+  environment        = var.environment
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids = module.vpc.private_subnet_ids
+  training_role_arn  = module.iam.training_role_arn
+  artifacts_bucket   = module.artifact_bucket.bucket_name
+  processed_bucket   = "nyc-taxi-processed-dev"
+}
 
 module "raw_bucket" {
   source      = "../../modules/s3"
