@@ -25,7 +25,12 @@ resource "aws_secretsmanager_secret_version" "db_password" {
 
 # ─────────────────────────────────────────────
 # Security group for RDS
-# Only EKS nodes can connect on port 5432
+# Allows:
+#   - EKS nodes (via security group reference)
+#   - All pods in VPC (via VPC CIDR)
+#     Needed because Kubernetes pods get IPs
+#     from the VPC CIDR but are not directly
+#     associated with the node security group
 # ─────────────────────────────────────────────
 
 resource "aws_security_group" "rds" {
@@ -33,12 +38,22 @@ resource "aws_security_group" "rds" {
   description = "Security group for RDS PostgreSQL"
   vpc_id      = var.vpc_id
 
+  # Allow from EKS nodes directly
   ingress {
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
     security_groups = [var.eks_node_security_group_id]
     description     = "Allow PostgreSQL from EKS nodes"
+  }
+
+  # Allow from all pods in VPC (pods get VPC IPs but different SG)
+  ingress {
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Allow PostgreSQL from all VPC resources (pods)"
   }
 
   egress {
@@ -69,7 +84,7 @@ resource "aws_db_subnet_group" "this" {
 
 # ─────────────────────────────────────────────
 # RDS PostgreSQL instance
-# MLflow uses this as its backend store
+# Shared by MLflow and Airflow (separate DBs)
 # ─────────────────────────────────────────────
 
 resource "aws_db_instance" "this" {
@@ -90,11 +105,11 @@ resource "aws_db_instance" "this" {
   backup_window           = "03:00-04:00"
   maintenance_window      = "Mon:04:00-Mon:05:00"
 
-  skip_final_snapshot     = true
-  deletion_protection     = false
-  multi_az                = false
-  publicly_accessible     = false
-  storage_encrypted       = true
+  skip_final_snapshot = true
+  deletion_protection = false
+  multi_az            = false
+  publicly_accessible = false
+  storage_encrypted   = true
 
   tags = {
     Name = "${var.project}-${var.environment}-mlflow-db"

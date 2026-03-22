@@ -28,7 +28,8 @@ resource "aws_security_group" "sagemaker" {
 
 # ─────────────────────────────────────────────
 # SageMaker Studio Domain
-# Used for EDA notebooks
+# Uses dedicated studio execution role
+# NOT the training role
 # ─────────────────────────────────────────────
 
 resource "aws_sagemaker_domain" "this" {
@@ -38,8 +39,7 @@ resource "aws_sagemaker_domain" "this" {
   subnet_ids  = var.private_subnet_ids
 
   default_user_settings {
-    execution_role = var.training_role_arn
-
+    execution_role  = var.sagemaker_studio_role_arn
     security_groups = [aws_security_group.sagemaker.id]
   }
 
@@ -57,7 +57,7 @@ resource "aws_sagemaker_user_profile" "this" {
   user_profile_name = "${var.project}-${var.environment}-user"
 
   user_settings {
-    execution_role = var.training_role_arn
+    execution_role = var.sagemaker_studio_role_arn
   }
 
   tags = {

@@ -17,3 +17,8 @@ output "training_role_arn" {
   description = "IAM role ARN for SageMaker training jobs"
   value       = aws_iam_role.training.arn
 }
+
+output "sagemaker_studio_role_arn" {
+  description = "IAM role ARN for SageMaker Studio execution"
+  value       = aws_iam_role.sagemaker_studio.arn
+}

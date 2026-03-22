@@ -23,6 +23,11 @@ variable "training_role_arn" {
   description = "IAM role ARN for SageMaker training jobs"
 }
 
+variable "sagemaker_studio_role_arn" {
+  type        = string
+  description = "IAM role ARN for SageMaker Studio execution (notebooks)"
+}
+
 variable "artifacts_bucket" {
   type        = string
   description = "S3 bucket name for ML artifacts"

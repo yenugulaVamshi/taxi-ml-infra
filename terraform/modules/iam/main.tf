@@ -10,8 +10,6 @@ resource "aws_iam_openid_connect_provider" "github" {
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
 }
 
-# GitHub Actions IAM role
-# Only repos in your GitHub org can assume this role
 resource "aws_iam_role" "github_actions" {
   name = "${var.project}-${var.environment}-github-actions-role"
 
@@ -41,7 +39,6 @@ resource "aws_iam_role" "github_actions" {
   })
 }
 
-# GitHub Actions permissions
 resource "aws_iam_role_policy" "github_actions" {
   name = "${var.project}-${var.environment}-github-actions-policy"
   role = aws_iam_role.github_actions.id
@@ -50,9 +47,9 @@ resource "aws_iam_role_policy" "github_actions" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "ECRAuth"
-        Effect = "Allow"
-        Action = ["ecr:GetAuthorizationToken"]
+        Sid      = "ECRAuth"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
         Resource = "*"
       },
       {
@@ -70,15 +67,6 @@ resource "aws_iam_role_policy" "github_actions" {
         Resource = "arn:aws:ecr:*:${var.account_id}:repository/${var.project}/*"
       },
       {
-        Sid    = "S3DAGSync"
-        Effect = "Allow"
-        Action = ["s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:DeleteObject"]
-        Resource = [
-          "arn:aws:s3:::${var.project}-${var.environment}-mwaa-dags",
-          "arn:aws:s3:::${var.project}-${var.environment}-mwaa-dags/*",
-        ]
-      },
-      {
         Sid    = "EKSDeploy"
         Effect = "Allow"
         Action = ["eks:DescribeCluster"]
@@ -90,8 +78,7 @@ resource "aws_iam_role_policy" "github_actions" {
 
 # ─────────────────────────────────────────────
 # IRSA — MLflow pod role
-# MLflow needs to read/write S3 artifacts
-# and read RDS password from Secrets Manager
+# MLflow needs S3 access for artifacts
 # ─────────────────────────────────────────────
 
 resource "aws_iam_role" "mlflow" {
@@ -107,7 +94,7 @@ resource "aws_iam_role" "mlflow" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
-          "${var.eks_oidc_provider_url}:sub" = "system:serviceaccount:mlflow:mlflow-sa"
+          "${var.eks_oidc_provider_url}:sub" = "system:serviceaccount:mlflow:mlflow"
           "${var.eks_oidc_provider_url}:aud" = "sts.amazonaws.com"
         }
       }
@@ -127,8 +114,8 @@ resource "aws_iam_role_policy" "mlflow" {
         Effect = "Allow"
         Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:DeleteObject"]
         Resource = [
-          "arn:aws:s3:::${var.project}-${var.environment}-artifacts",
-          "arn:aws:s3:::${var.project}-${var.environment}-artifacts/*",
+          "arn:aws:s3:::${var.project}-artifacts-${var.environment}-yenugula",
+          "arn:aws:s3:::${var.project}-artifacts-${var.environment}-yenugula/*",
         ]
       },
       {
@@ -178,17 +165,16 @@ resource "aws_iam_role_policy" "serving" {
       Effect = "Allow"
       Action = ["s3:GetObject", "s3:ListBucket"]
       Resource = [
-        "arn:aws:s3:::${var.project}-${var.environment}-artifacts",
-        "arn:aws:s3:::${var.project}-${var.environment}-artifacts/*",
+        "arn:aws:s3:::${var.project}-artifacts-${var.environment}-yenugula",
+        "arn:aws:s3:::${var.project}-artifacts-${var.environment}-yenugula/*",
       ]
     }]
   })
 }
 
 # ─────────────────────────────────────────────
-# SageMaker training role
-# Training jobs need to read processed data
-# and write model artifacts to S3
+# SageMaker Training role
+# Used by EKS training pods
 # ─────────────────────────────────────────────
 
 resource "aws_iam_role" "training" {
@@ -216,10 +202,10 @@ resource "aws_iam_role_policy" "training" {
         Effect = "Allow"
         Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"]
         Resource = [
-          "arn:aws:s3:::${var.project}-${var.environment}-processed",
-          "arn:aws:s3:::${var.project}-${var.environment}-processed/*",
-          "arn:aws:s3:::${var.project}-${var.environment}-artifacts",
-          "arn:aws:s3:::${var.project}-${var.environment}-artifacts/*",
+          "arn:aws:s3:::${var.project}-processed-${var.environment}-yenugula",
+          "arn:aws:s3:::${var.project}-processed-${var.environment}-yenugula/*",
+          "arn:aws:s3:::${var.project}-artifacts-${var.environment}-yenugula",
+          "arn:aws:s3:::${var.project}-artifacts-${var.environment}-yenugula/*",
         ]
       },
       {
@@ -237,6 +223,77 @@ resource "aws_iam_role_policy" "training" {
         Effect = "Allow"
         Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = "*"
+      }
+    ]
+  })
+}
+
+# ─────────────────────────────────────────────
+# SageMaker Studio Execution Role
+# SEPARATE from training role
+# This is what SageMaker Studio uses for notebooks
+# ─────────────────────────────────────────────
+
+resource "aws_iam_role" "sagemaker_studio" {
+  name = "${var.project}-${var.environment}-sagemaker-studio-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "sagemaker.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "sagemaker_studio" {
+  name = "${var.project}-${var.environment}-sagemaker-studio-policy"
+  role = aws_iam_role.sagemaker_studio.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "SageMakerStudio"
+        Effect   = "Allow"
+        Action   = ["sagemaker:*"]
+        Resource = "*"
+      },
+      {
+        Sid    = "S3Access"
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:DeleteObject"]
+        Resource = [
+          "arn:aws:s3:::${var.project}-raw-${var.environment}-yenugula",
+          "arn:aws:s3:::${var.project}-raw-${var.environment}-yenugula/*",
+          "arn:aws:s3:::${var.project}-processed-${var.environment}-yenugula",
+          "arn:aws:s3:::${var.project}-processed-${var.environment}-yenugula/*",
+          "arn:aws:s3:::${var.project}-artifacts-${var.environment}-yenugula",
+          "arn:aws:s3:::${var.project}-artifacts-${var.environment}-yenugula/*",
+        ]
+      },
+      {
+        Sid    = "ECRAccess"
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "*"
+      },
+      {
+        Sid    = "SecretsManager"
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = "arn:aws:secretsmanager:*:${var.account_id}:secret:/${var.project}/*"
       }
     ]
   })

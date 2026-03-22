@@ -1,20 +1,56 @@
+# ============================================================
+# k8s/airflow/values.yaml
+# Airflow Helm Chart - NYC Taxi ML Pipeline
+# Chart: apache-airflow/airflow
+# Tested: 2026-03-22
+# ============================================================
+
 airflowVersion: "2.9.2"
 
+# ── DATABASE CONNECTION ──────────────────────────────────────
+# Using existing RDS PostgreSQL (same instance as MLflow)
+# airflow database was manually created inside RDS
+# SSL is required by AWS RDS
 data:
-  metadataSecretName: airflow-db-secret
+  metadataConnection:
+    user: mlflow
+    pass: "s}U0b!v++%GNC?]!"
+    host: 10.0.4.32
+    port: 5432
+    db: airflow
+    protocol: postgresql+psycopg2
+    sslmode: require
 
+# ── DATABASE MIGRATION ───────────────────────────────────────
+# Creates Airflow schema automatically on first install
+migrateDatabaseJob:
+  enabled: true
+
+# ── EXECUTOR ─────────────────────────────────────────────────
+# LocalExecutor: tasks run inside the scheduler pod
+# Simple and reliable for dev environment
 executor: "LocalExecutor"
 
+# ── DISABLE BUNDLED DATABASES ────────────────────────────────
+# We use our own RDS - no need for bundled postgres or redis
 postgresql:
   enabled: false
 
 redis:
   enabled: false
 
+# ── WEBSERVER ────────────────────────────────────────────────
 webserver:
   replicas: 1
   service:
     type: ClusterIP
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
   defaultUser:
     enabled: true
     role: Admin
@@ -24,31 +60,49 @@ webserver:
     lastName: User
     password: admin123
 
+# ── SCHEDULER ────────────────────────────────────────────────
 scheduler:
   replicas: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
   logGroomerSidecar:
     enabled: false
 
+# ── WORKERS ──────────────────────────────────────────────────
+# Not needed for LocalExecutor
 workers:
   replicas: 0
   persistence:
     enabled: false
 
+# ── TRIGGERER ────────────────────────────────────────────────
 triggerer:
   enabled: false
 
+# ── DAGs ─────────────────────────────────────────────────────
+# No persistence for now - DAGs will be added via ConfigMap
+# or git-sync in a later phase
 dags:
   gitSync:
     enabled: false
   persistence:
     enabled: false
 
+# ── LOGS ─────────────────────────────────────────────────────
 logs:
   persistence:
     enabled: false
 
+# ── ENVIRONMENT VARIABLES ────────────────────────────────────
 env:
   - name: AIRFLOW__CORE__LOAD_EXAMPLES
     value: "false"
   - name: AIRFLOW__WEBSERVER__EXPOSE_CONFIG
+    value: "true"
+  - name: AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION
     value: "true"

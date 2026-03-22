@@ -13,6 +13,12 @@ variable "vpc_id" {
   description = "VPC ID where RDS will be created"
 }
 
+variable "vpc_cidr" {
+  type        = string
+  description = "VPC CIDR block - allows all pods in VPC to reach RDS"
+  default     = "10.0.0.0/16"
+}
+
 variable "private_subnet_ids" {
   type        = list(string)
   description = "Private subnet IDs for RDS subnet group"

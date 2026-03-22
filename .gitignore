@@ -62,3 +62,4 @@ Desktop.ini
 # Temporary IAM policy files
 trust-policy.json
 *-policy.json
+k8s/mlflow/mlflow.yaml
